@@ -23,7 +23,7 @@ federated_data/*.h5
 federated_data/*.pkl
 federated_data/client_*.pkl
 
-# Visualizations and metrics (YOUR REQUEST)
+# Visualizations and metrics
 federated_data/round_evaluation/
 federated_data/round_evaluation/*.png
 federated_data/round_evaluation/*.svg
@@ -31,7 +31,6 @@ federated_data/round_evaluation/*.html
 federated_data/round_evaluation/*.csv
 
 # Preprocessed data outputs
-preprocessed_data/
 preprocessed_data/*.pkl
 
 # ==========================================
