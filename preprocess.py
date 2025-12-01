@@ -15,7 +15,7 @@ from sklearn.pipeline import Pipeline
 # ------------------- Config -------------------
 DATAPATH = "E Commerce Dataset.xlsx"
 SHEET_NAME = "E Comm"
-OUTPUT_FOLDER = "./federated_data"
+OUTPUT_FOLDER = "./preprocessed_data"
 CLIENTS = 3  # Number of simulated clients/nodes
 BATCH_SIZE = 8  # Small for CPU
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)

@@ -3,18 +3,18 @@ FROM tensorflow/tensorflow:2.14.0
 
 WORKDIR /app
 
-# Copy only necessary files
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY prepare_federated_data.py .
-COPY federated_training.py .
-COPY evaluate_federated_model.py .
+COPY training_MLFlow.py .
 COPY E_Commerce_Dataset.xlsx .
+
+# Copy preprocessed federated data directory
+# This assumes preprocessing has already been run
+COPY preprocessed_data/ ./preprocessed_data/
 
 # Environment variable for MLflow tracking
 ENV MLFLOW_TRACKING_URI=http://mlflow:5000
 
-CMD ["python", "federated_training.py"]
-
-
+# Run training
+CMD ["python", "training_MLFlow.py"]

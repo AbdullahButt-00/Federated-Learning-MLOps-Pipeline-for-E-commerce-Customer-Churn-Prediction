@@ -19,8 +19,9 @@ from sklearn.utils import shuffle
 import plotly.graph_objects as go
 
 # ===================== CONFIG =====================
-DATA_FOLDER = "federated_data"
-MODEL_SAVE_PATH = os.path.join(DATA_FOLDER, "federated_churn_model.h5")
+DATA_FOLDER = "preprocessed_data"
+OUTPUT_FOLDER = "federated_data"
+MODEL_SAVE_PATH = os.path.join(OUTPUT_FOLDER, "federated_churn_model.h5")
 BATCH_SIZE = 8
 NUM_ROUNDS = 20             # change as needed
 LEARNING_RATE_CLIENT = 0.01
@@ -50,7 +51,7 @@ client_files = sorted([
 ])
 
 if not client_files:
-    raise RuntimeError(f"No client files found in {DATA_FOLDER}. Run prepare_federated_data.py first.")
+    raise RuntimeError(f"No client files found in {DATA_FOLDER}. Run preprocess.py first.")
 
 federated_train = []
 for file in client_files:
@@ -104,7 +105,7 @@ def model_fn():
     )
 
 # ===================== TRAINING & MLflow RUN =====================
-round_eval_dir = os.path.join(DATA_FOLDER, "round_evaluation")
+round_eval_dir = os.path.join(OUTPUT_FOLDER, "round_evaluation")
 os.makedirs(round_eval_dir, exist_ok=True)
 
 with mlflow.start_run(run_name=f"federated_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):

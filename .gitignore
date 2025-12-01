@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Trained models
+*.h5
+*.pkl
+*.pth
+*.pt
+*.ckpt
+*.pb
+
+
+# Federated data - keep structure but ignore outputs
+federated_data/*.h5
+federated_data/*.pkl
+federated_data/client_*.pkl
+
+# Visualizations and metrics (YOUR REQUEST)
+federated_data/round_evaluation/
+federated_data/round_evaluation/*.png
+federated_data/round_evaluation/*.svg
+federated_data/round_evaluation/*.html
+federated_data/round_evaluation/*.csv
+
+# Preprocessed data outputs
+preprocessed_data/
+preprocessed_data/*.pkl
+
+# ==========================================
+# MLflow
+# ==========================================
+mlruns/
+mlartifacts/
+mlflow.db
+*.db
+
+# ==========================================
+# Docker
+# ==========================================
+.dockerignore
+
+# ==========================================
+# Temporary files
+# ==========================================
+*.tmp
+*.bak
+*.cache
