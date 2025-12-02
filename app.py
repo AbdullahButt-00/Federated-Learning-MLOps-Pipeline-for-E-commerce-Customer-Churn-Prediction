@@ -13,20 +13,98 @@ from scipy import stats
 import json
 from collections import deque
 from threading import Lock
+import mlflow
+import mlflow.tensorflow
+from mlflow.tracking import MlflowClient
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ===================== CONFIG =====================
-MODEL_PATH = os.getenv("MODEL_PATH", "federated_data/federated_churn_model.h5")
 PREPROCESSOR_PATH = os.getenv("PREPROCESSOR_PATH", "preprocessed_data/preprocessor.pkl")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+MODEL_REGISTRY_NAME = "churn_prediction_model"
+
+# ===================== MLflow Setup =====================
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+client = MlflowClient()
+
+# ===================== Model Loading =====================
+def get_production_model():
+    """
+    Load the latest Production model from MLflow registry.
+    Falls back to Staging if no Production model exists.
+    """
+    try:
+        # Try to load from Production stage
+        try:
+            model_uri = f"models:/{MODEL_REGISTRY_NAME}/Production"
+            logger.info(f"Loading Production model from: {model_uri}")
+            model = mlflow.tensorflow.load_model(model_uri)
+            
+            # Get version info
+            versions = client.get_latest_versions(MODEL_REGISTRY_NAME, stages=["Production"])
+            if versions:
+                version = versions[0].version
+                accuracy = versions[0].tags.get('accuracy', 'N/A')
+                logger.info(f"✓ Loaded Production model version {version} (accuracy: {accuracy})")
+                return model, version
+            else:
+                logger.info("✓ Loaded Production model")
+                return model, "Production"
+                
+        except Exception as e:
+            logger.warning(f"No Production model found, trying Staging: {e}")
+            
+            # Fallback to Staging
+            try:
+                model_uri = f"models:/{MODEL_REGISTRY_NAME}/Staging"
+                logger.info(f"Loading Staging model from: {model_uri}")
+                model = mlflow.tensorflow.load_model(model_uri)
+                
+                versions = client.get_latest_versions(MODEL_REGISTRY_NAME, stages=["Staging"])
+                if versions:
+                    version = versions[0].version
+                    accuracy = versions[0].tags.get('accuracy', 'N/A')
+                    logger.info(f"✓ Loaded Staging model version {version} (accuracy: {accuracy})")
+                    return model, version
+                else:
+                    logger.info("✓ Loaded Staging model")
+                    return model, "Staging"
+                    
+            except Exception as e2:
+                logger.warning(f"No Staging model found, trying latest version: {e2}")
+                
+                # Final fallback: get latest version regardless of stage
+                versions = client.search_model_versions(f"name='{MODEL_REGISTRY_NAME}'")
+                if versions:
+                    latest_version = max([int(v.version) for v in versions])
+                    model_uri = f"models:/{MODEL_REGISTRY_NAME}/{latest_version}"
+                    logger.info(f"Loading latest version {latest_version} from: {model_uri}")
+                    model = mlflow.tensorflow.load_model(model_uri)
+                    logger.info(f"✓ Loaded model version {latest_version}")
+                    return model, str(latest_version)
+                else:
+                    raise RuntimeError("No model versions found in registry")
+    
+    except Exception as e:
+        logger.error(f"Error loading model from MLflow: {e}")
+        # Ultimate fallback to local file
+        logger.warning("Falling back to local model file")
+        model_path = os.getenv("MODEL_PATH", "federated_data/federated_churn_model.h5")
+        if os.path.exists(model_path):
+            model = tf.keras.models.load_model(model_path)
+            logger.info(f"✓ Loaded model from local file: {model_path}")
+            return model, "local"
+        else:
+            raise RuntimeError(f"Could not load model from MLflow or local file: {e}")
 
 # ===================== FastAPI App =====================
 app = FastAPI(
     title="Federated Churn Prediction API",
-    description="ML model serving with Prometheus metrics",
-    version="1.0.0"
+    description="ML model serving with Prometheus metrics and MLflow integration",
+    version="2.0.0"
 )
 
 # ===================== Prometheus Metrics =====================
@@ -34,6 +112,7 @@ PREDICTION_COUNTER = Counter('predictions_total', 'Total predictions made')
 PREDICTION_LATENCY = Histogram('prediction_latency_seconds', 'Prediction latency')
 CHURN_PREDICTIONS = Counter('churn_predictions', 'Churn predictions', ['label'])
 ERROR_COUNTER = Counter('prediction_errors_total', 'Total prediction errors')
+MODEL_VERSION_GAUGE = Gauge('model_version', 'Current model version in use')
 
 # ===================== Drift Detection Setup =====================
 DRIFT_THRESHOLD = 0.05  # p-value threshold for KS test
@@ -51,14 +130,27 @@ DRIFT_SCORE = Gauge('data_drift_score', 'Current drift score (KS statistic)', ['
 
 # ===================== Load Model & Preprocessor =====================
 try:
-    logger.info(f"Loading model from: {MODEL_PATH}")
-    model = tf.keras.models.load_model(MODEL_PATH)
-    logger.info("✓ Model loaded successfully")
+    logger.info("=" * 60)
+    logger.info("Initializing Churn Prediction API")
+    logger.info("=" * 60)
+    
+    # Load model from MLflow
+    model, current_model_version = get_production_model()
+    
+    # Update Prometheus gauge
+    try:
+        MODEL_VERSION_GAUGE.set(int(current_model_version))
+    except ValueError:
+        MODEL_VERSION_GAUGE.set(0)  # If version is not a number
     
     logger.info(f"Loading preprocessor from: {PREPROCESSOR_PATH}")
     with open(PREPROCESSOR_PATH, "rb") as f:
         preprocessor = pickle.load(f)
     logger.info("✓ Preprocessor loaded successfully")
+    
+    logger.info("=" * 60)
+    logger.info(f"✓ API Ready - Using Model Version: {current_model_version}")
+    logger.info("=" * 60)
     
 except FileNotFoundError as e:
     logger.error(f"File not found: {e}")
@@ -117,6 +209,7 @@ class PredictionResponse(BaseModel):
     churn_prediction: int
     risk_level: str
     latency_ms: float
+    model_version: str
     
 class AlertWebhook(BaseModel):
     """Webhook payload from Alertmanager"""
@@ -173,11 +266,15 @@ def check_all_features_drift(reference_df, monitoring_df):
 async def root():
     return {
         "message": "Federated Churn Prediction API",
-        "version": "1.0.0",
+        "version": "2.0.0",
+        "model_version": str(current_model_version),
+        "mlflow_tracking_uri": MLFLOW_TRACKING_URI,
         "endpoints": {
             "predict": "/predict",
             "health": "/health",
             "metrics": "/metrics",
+            "model-info": "/model-info",
+            "reload-model": "/reload-model",
             "docs": "/docs"
         }
     }
@@ -261,7 +358,8 @@ async def predict_churn(data: CustomerData):
             "churn_probability": round(prediction_prob, 4),
             "churn_prediction": prediction_label,
             "risk_level": risk_level,
-            "latency_ms": round(latency * 1000, 2)
+            "latency_ms": round(latency * 1000, 2),
+            "model_version": str(current_model_version)
         }
     
     except Exception as e:
@@ -282,7 +380,8 @@ async def health_check():
         return {
             "status": "healthy",
             "model_loaded": True,
-            "preprocessor_loaded": True
+            "preprocessor_loaded": True,
+            "model_version": str(current_model_version)
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -293,13 +392,73 @@ async def model_info():
     """
     Get model metadata
     """
+    # Try to get accuracy from MLflow
+    accuracy = None
+    try:
+        if current_model_version != "local":
+            versions = client.search_model_versions(
+                f"name='{MODEL_REGISTRY_NAME}' and version='{current_model_version}'"
+            )
+            if versions and 'accuracy' in versions[0].tags:
+                accuracy = float(versions[0].tags['accuracy'])
+    except:
+        pass
+    
     return {
-        "model_path": MODEL_PATH,
+        "model_registry_name": MODEL_REGISTRY_NAME,
+        "current_version": str(current_model_version),
+        "accuracy": accuracy,
         "input_shape": model.input_shape,
         "output_shape": model.output_shape,
         "model_type": "TensorFlow/Keras",
-        "preprocessor_path": PREPROCESSOR_PATH
+        "preprocessor_path": PREPROCESSOR_PATH,
+        "mlflow_tracking_uri": MLFLOW_TRACKING_URI
     }
+
+@app.post("/reload-model")
+async def reload_model():
+    """
+    Reload the model from MLflow registry (useful after retraining)
+    """
+    global model, current_model_version
+    
+    try:
+        logger.info("Reloading model from MLflow registry...")
+        new_model, new_version = get_production_model()
+        
+        # Update global variables
+        model = new_model
+        current_model_version = new_version
+        
+        # Update Prometheus gauge
+        try:
+            MODEL_VERSION_GAUGE.set(int(current_model_version))
+        except ValueError:
+            MODEL_VERSION_GAUGE.set(0)
+        
+        # Get accuracy if available
+        accuracy = None
+        try:
+            if current_model_version != "local":
+                versions = client.search_model_versions(
+                    f"name='{MODEL_REGISTRY_NAME}' and version='{current_model_version}'"
+                )
+                if versions and 'accuracy' in versions[0].tags:
+                    accuracy = float(versions[0].tags['accuracy'])
+        except:
+            pass
+        
+        logger.info(f"✓ Model reloaded: version {current_model_version}")
+        
+        return {
+            "status": "success",
+            "new_version": str(current_model_version),
+            "accuracy": accuracy,
+            "message": f"Model reloaded to version {current_model_version}"
+        }
+    except Exception as e:
+        logger.error(f"Error reloading model: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reload model: {str(e)}")
     
 @app.get("/drift-status")
 async def drift_status():
@@ -346,8 +505,6 @@ if __name__ == "__main__":
     import uvicorn
     
     logger.info("Starting Federated Churn Prediction API...")
-    logger.info(f"Model path: {MODEL_PATH}")
-    logger.info(f"Preprocessor path: {PREPROCESSOR_PATH}")
     
     uvicorn.run(
         app, 

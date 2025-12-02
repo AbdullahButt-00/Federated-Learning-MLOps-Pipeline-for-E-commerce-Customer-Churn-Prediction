@@ -4,6 +4,7 @@
 import os
 import pickle
 import json
+import argparse
 import pandas as pd
 import numpy as np
 import sklearn
@@ -13,12 +14,9 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
 # ------------------- Config -------------------
-DATAPATH = "E_Commerce_Dataset.xlsx"
-SHEET_NAME = "E Comm"
 OUTPUT_FOLDER = "./preprocessed_data"
 CLIENTS = 3  # Number of simulated clients/nodes
 BATCH_SIZE = 8  # Small for CPU
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 RANDOM_STATE = 42
 np.random.seed(RANDOM_STATE)
 
@@ -111,6 +109,49 @@ def preprocess_node(df_node, preprocessor):
 
 # ------------------- Main -------------------
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Preprocess e-commerce churn dataset for federated learning')
+    parser.add_argument(
+        '--dataset',
+        type=str,
+        default='E_Commerce_Dataset.xlsx',
+        help='Path to the Excel dataset file (default: E_Commerce_Dataset.xlsx)'
+    )
+    parser.add_argument(
+        '--sheet',
+        type=str,
+        default='E Comm',
+        help='Sheet name in the Excel file (default: E Comm)'
+    )
+    parser.add_argument(
+        '--output-folder',
+        type=str,
+        default='./preprocessed_data',
+        help='Output folder for preprocessed data (default: ./preprocessed_data)'
+    )
+    parser.add_argument(
+        '--clients',
+        type=int,
+        default=3,
+        help='Number of simulated federated clients (default: 3)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Use arguments
+    DATAPATH = args.dataset
+    SHEET_NAME = args.sheet
+    OUTPUT_FOLDER = args.output_folder
+    CLIENTS = args.clients
+    
+    # Create output folder
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    
+    print(f"Loading dataset from: {DATAPATH}")
+    print(f"Sheet name: {SHEET_NAME}")
+    print(f"Output folder: {OUTPUT_FOLDER}")
+    print(f"Number of clients: {CLIENTS}")
+    
     df = load_and_clean(DATAPATH, SHEET_NAME)
     print("Raw data shape:", df.shape)
 
@@ -138,10 +179,14 @@ if __name__ == "__main__":
         "sklearn_version": sklearn.__version__,
         "numeric_cols": numeric_cols,
         "categorical_cols": categorical_cols,
-        "transformed_feature_names": transformed_feature_names
+        "transformed_feature_names": transformed_feature_names,
+        "dataset_path": DATAPATH,
+        "sheet_name": SHEET_NAME,
+        "num_clients": CLIENTS,
+        "total_samples": len(df)
     }
     with open(os.path.join(OUTPUT_FOLDER, "metadata.json"), "w") as mf:
-        json.dump(metadata, mf)
+        json.dump(metadata, mf, indent=2)
     print("Saved metadata ->", os.path.join(OUTPUT_FOLDER, "metadata.json"))
 
     # Simulate clients by shuffling and splitting
@@ -157,10 +202,12 @@ if __name__ == "__main__":
                 'y': y,
                 'transformed_feature_names': transformed_feature_names
             }, f)
-        print(f"Saved client {idx+1} data -> {file_path}")
+        print(f"Saved client {idx+1} data -> {file_path} (samples: {len(y)})")
 
     # Save the fitted preprocessor (note: require compatible sklearn when loading)
     preproc_path = os.path.join(OUTPUT_FOLDER, "preprocessor.pkl")
     with open(preproc_path, "wb") as f:
         pickle.dump(preprocessor, f)
     print(f"Saved preprocessor -> {preproc_path}")
+    
+    print("\n✓ Preprocessing complete!")
