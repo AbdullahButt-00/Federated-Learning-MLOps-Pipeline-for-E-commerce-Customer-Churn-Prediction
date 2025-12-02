@@ -5,10 +5,14 @@ import tensorflow as tf
 import pickle
 import numpy as np
 import pandas as pd
-from prometheus_client import Counter, Histogram, make_asgi_app
+from prometheus_client import Counter, Histogram, Gauge, make_asgi_app
 import time
 import os
 import logging
+from scipy import stats
+import json
+from collections import deque
+from threading import Lock
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +34,20 @@ PREDICTION_COUNTER = Counter('predictions_total', 'Total predictions made')
 PREDICTION_LATENCY = Histogram('prediction_latency_seconds', 'Prediction latency')
 CHURN_PREDICTIONS = Counter('churn_predictions', 'Churn predictions', ['label'])
 ERROR_COUNTER = Counter('prediction_errors_total', 'Total prediction errors')
+
+# ===================== Drift Detection Setup =====================
+DRIFT_THRESHOLD = 0.05  # p-value threshold for KS test
+REFERENCE_WINDOW = 100  # Size of reference data window
+MONITORING_WINDOW = 50  # Size of monitoring window for drift check
+
+# Store recent predictions for drift detection
+reference_data = deque(maxlen=REFERENCE_WINDOW)
+monitoring_data = deque(maxlen=MONITORING_WINDOW)
+data_lock = Lock()
+
+# Prometheus metric for drift
+DRIFT_DETECTED = Counter('data_drift_detected_total', 'Total drift detections', ['feature'])
+DRIFT_SCORE = Gauge('data_drift_score', 'Current drift score (KS statistic)', ['feature'])
 
 # ===================== Load Model & Preprocessor =====================
 try:
@@ -99,6 +117,56 @@ class PredictionResponse(BaseModel):
     churn_prediction: int
     risk_level: str
     latency_ms: float
+    
+class AlertWebhook(BaseModel):
+    """Webhook payload from Alertmanager"""
+    version: str
+    groupKey: str
+    status: str
+    alerts: list
+    
+def detect_drift(feature_name, reference, monitoring):
+    """
+    Perform Kolmogorov-Smirnov test to detect drift
+    Returns: (is_drift, ks_statistic, p_value)
+    """
+    if len(reference) < 30 or len(monitoring) < 30:
+        return False, 0.0, 1.0
+    
+    ks_statistic, p_value = stats.ks_2samp(reference, monitoring)
+    is_drift = p_value < DRIFT_THRESHOLD
+    
+    return is_drift, ks_statistic, p_value
+
+def check_all_features_drift(reference_df, monitoring_df):
+    """
+    Check drift across all numeric features
+    Returns dict of features with drift detected
+    """
+    drift_detected = {}
+    
+    numeric_cols = reference_df.select_dtypes(include=[np.number]).columns
+    
+    for col in numeric_cols:
+        if col in monitoring_df.columns:
+            is_drift, ks_stat, p_val = detect_drift(
+                col,
+                reference_df[col].values,
+                monitoring_df[col].values
+            )
+            
+            # Update Prometheus metrics
+            DRIFT_SCORE.labels(feature=col).set(ks_stat)
+            
+            if is_drift:
+                DRIFT_DETECTED.labels(feature=col).inc()
+                drift_detected[col] = {
+                    'ks_statistic': float(ks_stat),
+                    'p_value': float(p_val)
+                }
+                logger.warning(f"⚠️ DRIFT DETECTED in {col}: KS={ks_stat:.4f}, p={p_val:.4f}")
+    
+    return drift_detected
 
 # ===================== API Endpoints =====================
 @app.get("/")
@@ -114,24 +182,58 @@ async def root():
         }
     }
 
+@app.post("/webhook/drift-alert")
+async def receive_drift_alert(webhook: AlertWebhook):
+    """
+    Receive drift alerts from Alertmanager
+    This will later trigger retraining
+    """
+    logger.warning(f"🚨 ALERT RECEIVED: {webhook.status}")
+    
+    for alert in webhook.alerts:
+        alert_name = alert.get('labels', {}).get('alertname')
+        feature = alert.get('labels', {}).get('feature', 'unknown')
+        
+        logger.warning(f"Alert: {alert_name}, Feature: {feature}")
+        logger.warning(f"Description: {alert.get('annotations', {}).get('description')}")
+        
+        # TODO: Later, trigger retraining here
+        # For now, just log
+        if alert_name == 'DataDriftDetected':
+            logger.critical(f"⚠️ RETRAINING NEEDED for feature: {feature}")
+    
+    return {"status": "received"}
+
+
 @app.post("/predict", response_model=PredictionResponse)
 async def predict_churn(data: CustomerData):
     """
     Predict customer churn probability
-    
-    Returns:
-    - churn_probability: Float between 0-1
-    - churn_prediction: 0 (no churn) or 1 (churn)
-    - risk_level: Low/Medium/High based on probability
-    - latency_ms: Prediction latency in milliseconds
     """
     start_time = time.time()
     
     try:
-        # Convert to DataFrame (maintain column order)
+        # Convert to DataFrame
         df = pd.DataFrame([data.dict()])
         
-        # Preprocess (this handles the column transformations)
+        # Store raw input for drift detection
+        with data_lock:
+            if len(reference_data) < REFERENCE_WINDOW:
+                reference_data.append(df.copy())
+            else:
+                monitoring_data.append(df.copy())
+                
+                # Check for drift when monitoring window is full
+                if len(monitoring_data) == MONITORING_WINDOW:
+                    ref_df = pd.concat(list(reference_data), ignore_index=True)
+                    mon_df = pd.concat(list(monitoring_data), ignore_index=True)
+                    
+                    drift_results = check_all_features_drift(ref_df, mon_df)
+                    
+                    if drift_results:
+                        logger.warning(f"🚨 Drift detected in {len(drift_results)} features")
+        
+        # Preprocess
         X_transformed = preprocessor.transform(df)
         
         # Predict
@@ -198,6 +300,42 @@ async def model_info():
         "model_type": "TensorFlow/Keras",
         "preprocessor_path": PREPROCESSOR_PATH
     }
+    
+@app.get("/drift-status")
+async def drift_status():
+    """
+    Get current drift detection status
+    """
+    with data_lock:
+        return {
+            "reference_samples": len(reference_data),
+            "monitoring_samples": len(monitoring_data),
+            "drift_threshold": DRIFT_THRESHOLD,
+            "monitoring_active": len(monitoring_data) > 0
+        }
+        
+@app.post("/check-drift")
+async def manual_drift_check():
+    """
+    Manually trigger drift detection
+    """
+    with data_lock:
+        if len(reference_data) < 30 or len(monitoring_data) < 30:
+            raise HTTPException(
+                status_code=400,
+                detail="Not enough data for drift detection"
+            )
+        
+        ref_df = pd.concat(list(reference_data), ignore_index=True)
+        mon_df = pd.concat(list(monitoring_data), ignore_index=True)
+        
+        drift_results = check_all_features_drift(ref_df, mon_df)
+        
+        return {
+            "drift_detected": len(drift_results) > 0,
+            "features_with_drift": drift_results,
+            "total_features_checked": len(ref_df.select_dtypes(include=[np.number]).columns)
+        }
 
 # ===================== Prometheus Metrics Endpoint =====================
 metrics_app = make_asgi_app()

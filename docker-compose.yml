@@ -29,6 +29,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -57,6 +58,23 @@ services:
       - churn-network
     depends_on:
       - prometheus
+
+  # Add this after grafana service
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    networks:
+      - churn-network
+    depends_on:
+      - churn-api
 
   # MLflow (optional, if you want to run it)
   mlflow:
@@ -88,3 +106,4 @@ volumes:
   prometheus-data:
   grafana-data:
   mlflow-data:
+  alertmanager-data:

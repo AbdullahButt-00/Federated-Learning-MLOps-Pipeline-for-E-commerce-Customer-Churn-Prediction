@@ -1,3 +1,4 @@
 Prometheus + Grafana refinement
 Drift Detection -- Dataset creation and Drift Detection -> Grafana / Prometheus detect and retraining triggers
 CI/CD through Kubernetes and Jenkins
+versioning using MLFlow
