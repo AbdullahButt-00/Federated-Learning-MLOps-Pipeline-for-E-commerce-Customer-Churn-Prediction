@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: preprocess-job
+  namespace: churn-prediction
+spec:
+  template:
+    metadata:
+      labels:
+        app: preprocess
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: preprocess
+        image: your-registry/churn-preprocess:latest  # Update with your image
+        imagePullPolicy: Always
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow-service:5000"
+        volumeMounts:
+        - name: model-data
+          mountPath: /app/preprocessed_data
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+      volumes:
+      - name: model-data
+        persistentVolumeClaim:
+          claimName: model-data-pvc

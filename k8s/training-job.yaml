@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: training-job
+  namespace: churn-prediction
+spec:
+  template:
+    metadata:
+      labels:
+        app: training
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: training
+        image: your-registry/churn-training:latest  # Update with your image
+        imagePullPolicy: Always
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow-service:5000"
+        volumeMounts:
+        - name: model-data
+          mountPath: /app/preprocessed_data
+        - name: model-data
+          mountPath: /app/federated_data
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+      volumes:
+      - name: model-data
+        persistentVolumeClaim:
+          claimName: model-data-pvc

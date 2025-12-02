@@ -1,68 +1,90 @@
 version: '3.8'
 
 services:
-  # ---------------------------
-  # Training service
-  # ---------------------------
-  training:
-    build:
-      context: .
-      dockerfile: Dockerfile.training
-    volumes:
-      - ./federated_data:/app/federated_data
-      - ./mlruns:/app/mlruns
-    environment:
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
-    depends_on:
-      - mlflow
-
-  # ---------------------------
-  # Model serving API
-  # ---------------------------
-  serving:
+  # Churn Prediction API
+  churn-api:
     build:
       context: .
       dockerfile: Dockerfile.serving
+    container_name: churn-api
     ports:
       - "8000:8000"
-    volumes:
-      - ./federated_data:/app/model
     environment:
-      - MODEL_PATH=/app/model/federated_churn_model.h5
-      - PREPROCESSOR_PATH=/app/model/preprocessor.pkl
-    depends_on:
-      - training
+      - MODEL_PATH=federated_data/federated_churn_model.h5
+      - PREPROCESSOR_PATH=preprocessed_data/preprocessor.pkl
+    networks:
+      - churn-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-
-  # ---------------------------
-  # MLflow server
-  # ---------------------------
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.9.2
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./mlruns:/mlflow/mlruns
-    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri /mlflow/mlruns
-
-  # ---------------------------
-  # Prometheus monitoring
-  # ---------------------------
+  # Prometheus
   prometheus:
     image: prom/prometheus:latest
+    container_name: prometheus
     ports:
       - "9090:9090"
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - churn-network
+    depends_on:
+      - churn-api
 
-  # ---------------------------
-  # Grafana monitoring dashboard
-  # ---------------------------
+  # Grafana
   grafana:
     image: grafana/grafana:latest
+    container_name: grafana
     ports:
       - "3000:3000"
     environment:
+      - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
-      - ./monitoring/grafana:/var/lib/grafana
+      - grafana-data:/var/lib/grafana
+    networks:
+      - churn-network
+    depends_on:
+      - prometheus
+
+  # MLflow (optional, if you want to run it)
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.9.2
+    container_name: mlflow
+    ports:
+      - "5000:5000"
+    command:
+      - mlflow
+      - server
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "5000"
+      - --backend-store-uri
+      - sqlite:///mlflow/mlflow.db
+      - --default-artifact-root
+      - /mlflow/artifacts
+    volumes:
+      - mlflow-data:/mlflow
+    networks:
+      - churn-network
+
+networks:
+  churn-network:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  mlflow-data:

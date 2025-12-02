@@ -13,7 +13,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
 # ------------------- Config -------------------
-DATAPATH = "E Commerce Dataset.xlsx"
+DATAPATH = "E_Commerce_Dataset.xlsx"
 SHEET_NAME = "E Comm"
 OUTPUT_FOLDER = "./preprocessed_data"
 CLIENTS = 3  # Number of simulated clients/nodes

@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Copy only necessary files
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requi rements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY preprocess.py .
 COPY E_Commerce_Dataset.xlsx .

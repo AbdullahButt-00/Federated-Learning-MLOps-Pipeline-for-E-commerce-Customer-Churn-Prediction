@@ -67,7 +67,7 @@ print(f"Loaded {len(federated_train)} federated client datasets")
 with open(os.path.join(DATA_FOLDER, "preprocessor.pkl"), "rb") as f:
     preprocessor = pickle.load(f)
 
-raw_df = pd.read_excel("E Commerce Dataset.xlsx", sheet_name="E Comm")
+raw_df = pd.read_excel("E_Commerce_Dataset.xlsx", sheet_name="E Comm")
 raw_df['Churn'] = raw_df['Churn'].astype(int)
 raw_df = shuffle(raw_df, random_state=RANDOM_STATE)
 
