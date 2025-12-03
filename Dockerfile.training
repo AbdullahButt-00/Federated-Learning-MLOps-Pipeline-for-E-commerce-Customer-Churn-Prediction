@@ -1,3 +1,4 @@
+# Dockerfile.training
 FROM tensorflow/tensorflow:2.14.0
 
 WORKDIR /app
@@ -6,14 +7,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY training_MLFlow.py .
-
-# Dataset will be provided via volume mount or argument
 COPY E_Commerce_Dataset.xlsx .
 
-ENV MLFLOW_TRACKING_URI=http://mlflow-service:5000
+# Copy preprocessed federated data directory
+# This assumes preprocessing has already been run
+COPY preprocessed_data/ ./preprocessed_data/
 
-# Use ENTRYPOINT to allow passing arguments
-ENTRYPOINT ["python", "training_MLFlow.py"]
+# Environment variable for MLflow tracking
+ENV MLFLOW_TRACKING_URI=http://mlflow:5000
 
-# Default arguments (can be overridden)
-CMD ["--dataset", "E_Commerce_Dataset.xlsx"]
+# Run training
+CMD ["python", "training_MLFlow.py"]

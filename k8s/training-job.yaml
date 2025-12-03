@@ -12,8 +12,8 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: training
-        image: churn-training:latest
-        imagePullPolicy: Never  # Use local image from minikube
+        image: your-registry/churn-training:latest  # Update with your image
+        imagePullPolicy: Always
         env:
         - name: MLFLOW_TRACKING_URI
           value: "http://mlflow-service:5000"

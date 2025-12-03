@@ -3,7 +3,7 @@
 # Test script to generate predictions with data drift
 # This creates normal data first, then introduces drift
 
-API_URL="http://localhost:8000/predict"
+API_URL="http://192.168.49.2:32176/predict"
 
 echo "=========================================="
 echo "Starting Drift Detection Test"

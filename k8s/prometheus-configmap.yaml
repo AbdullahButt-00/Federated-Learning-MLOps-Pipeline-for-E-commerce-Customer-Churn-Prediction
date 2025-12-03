@@ -12,14 +12,6 @@ data:
         monitor: 'churn-prediction-monitor'
         environment: 'production'
 
-    alerting:
-      alertmanagers:
-        - static_configs:
-            - targets: ['alertmanager-service:9093']
-
-    rule_files:
-      - '/etc/prometheus/alert_rules.yml'
-
     scrape_configs:
       # Scrape churn-prediction API pods
       - job_name: 'churn-prediction-api'
@@ -56,6 +48,7 @@ data:
           - targets: ['localhost:9090']
             labels:
               service: 'prometheus'
+<<<<<<< HEAD
               component: 'monitoring'
 
   alert_rules.yml: |
@@ -137,3 +130,6 @@ data:
             annotations:
               summary: "Churn Prediction API is down"
               description: "The API has been unreachable for more than 2 minutes"
+=======
+              component: 'monitoring'
+>>>>>>> parent of 9400a4d (Created CI/CD pipeline)
