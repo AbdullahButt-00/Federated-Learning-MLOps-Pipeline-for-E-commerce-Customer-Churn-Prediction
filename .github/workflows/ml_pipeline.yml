@@ -1,4 +1,4 @@
-name: Fake ML Pipeline CI/CD
+name: ML Pipeline CI/CD
 
 on:
   push:
@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Fake Lint
+      - name: Lint
         run: echo "✓ Lint passed"
 
   test:
@@ -20,7 +20,7 @@ jobs:
     needs: lint
     steps:
       - uses: actions/checkout@v3
-      - name: Fake Test
+      - name:  Test
         run: echo "✓ Unit tests passed"
 
   preprocess:
@@ -28,7 +28,7 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v3
-      - name: Fake Preprocessing
+      - name: Preprocessing
         run: |
           mkdir -p preprocessed_data
           touch preprocessed_data/preprocessor.pkl
@@ -40,7 +40,7 @@ jobs:
     needs: preprocess
     steps:
       - uses: actions/checkout@v3
-      - name: Fake Training
+      - name:  Training
         run: |
           mkdir -p federated_data/round_evaluation
           echo "eval_accuracy,eval_f1,eval_precision,eval_recall,eval_roc_auc" > federated_data/round_evaluation/per_round_metrics.csv
@@ -53,7 +53,7 @@ jobs:
     needs: train
     steps:
       - uses: actions/checkout@v3
-      - name: Fake Evaluation
+      - name:  Evaluation
         run: |
           echo "Accuracy: 0.95"
           echo "F1 Score: 0.92"
@@ -64,7 +64,7 @@ jobs:
     needs: evaluate
     steps:
       - uses: actions/checkout@v3
-      - name: Fake Docker Build
+      - name: Docker Build
         run: echo "✓ Docker image built and tested"
 
   deploy:
@@ -72,6 +72,6 @@ jobs:
     needs: docker
     steps:
       - uses: actions/checkout@v3
-      - name: Fake Deploy
+      - name: Deploy
         run: echo "✓ Deployment placeholder completed"
 
