@@ -1,0 +1,172 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-trigger-script
+  namespace: churn-prediction
+data:
+  jenkins_trigger.py: |
+    from flask import Flask, request, jsonify
+    import requests
+    import os
+    import logging
+
+    app = Flask(__name__)
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
+    JENKINS_URL = os.getenv("JENKINS_URL")
+    JENKINS_JOB = os.getenv("JENKINS_JOB")
+    JENKINS_USER = os.getenv("JENKINS_USER")
+    JENKINS_TOKEN = os.getenv("JENKINS_TOKEN")
+    DRIFT_DATASET = os.getenv("DRIFT_DATASET")
+
+    @app.route('/health', methods=['GET'])
+    def health():
+        return jsonify({"status": "healthy"}), 200
+
+    @app.route('/trigger-retraining', methods=['POST'])
+    def trigger_retraining():
+        try:
+            data = request.json
+            logger.info(f"Received alert: {data}")
+            
+            alerts = data.get('alerts', [])
+            if not alerts:
+                return jsonify({"status": "no alerts"}), 200
+            
+            for alert in alerts:
+                if alert.get('status') == 'firing':
+                    logger.info(f"Triggering Jenkins pipeline for alert: {alert.get('labels', {}).get('alertname')}")
+                    
+                    jenkins_url = f"{JENKINS_URL}/job/{JENKINS_JOB}/buildWithParameters"
+                    params = {
+                        'DATASET_PATH': DRIFT_DATASET,
+                        'SKIP_TESTS': 'false',
+                        'FORCE_DEPLOY': 'false'
+                    }
+                    
+                    response = requests.post(
+                        jenkins_url,
+                        auth=(JENKINS_USER, JENKINS_TOKEN),
+                        params=params,
+                        timeout=10
+                    )
+                    
+                    if response.status_code in [200, 201]:
+                        logger.info("Successfully triggered Jenkins pipeline")
+                        return jsonify({"status": "pipeline triggered"}), 200
+                    else:
+                        logger.error(f"Failed to trigger pipeline: {response.status_code}")
+                        return jsonify({"error": "trigger failed"}), 500
+            
+            return jsonify({"status": "processed"}), 200
+            
+        except Exception as e:
+            logger.error(f"Error processing alert: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    if __name__ == '__main__':
+        app.run(host='0.0.0.0', port=5001)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-trigger-config
+  namespace: churn-prediction
+data:
+  JENKINS_URL: "http://host.minikube.internal:8090"
+  JENKINS_JOB: "churn-prediction-pipeline"
+  DRIFT_DATASET: "E_Commerce_Dataset_Drifted.xlsx"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jenkins-credentials
+  namespace: churn-prediction
+type: Opaque
+stringData:
+  JENKINS_USER: "admin"
+  JENKINS_TOKEN: "11dea1c4a903d4a990220dc2b079f51430"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins-trigger
+  namespace: churn-prediction
+  labels:
+    app: jenkins-trigger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jenkins-trigger
+  template:
+    metadata:
+      labels:
+        app: jenkins-trigger
+    spec:
+      containers:
+      - name: jenkins-trigger
+        image: python:3.9-slim
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            pip install flask requests &&
+            python /app/jenkins_trigger.py
+        ports:
+        - containerPort: 5001
+          name: http
+        env:
+        - name: JENKINS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: jenkins-trigger-config
+              key: JENKINS_URL
+        - name: JENKINS_JOB
+          valueFrom:
+            configMapKeyRef:
+              name: jenkins-trigger-config
+              key: JENKINS_JOB
+        - name: DRIFT_DATASET
+          valueFrom:
+            configMapKeyRef:
+              name: jenkins-trigger-config
+              key: DRIFT_DATASET
+        - name: JENKINS_USER
+          valueFrom:
+            secretKeyRef:
+              name: jenkins-credentials
+              key: JENKINS_USER
+        - name: JENKINS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: jenkins-credentials
+              key: JENKINS_TOKEN
+        volumeMounts:
+        - name: script
+          mountPath: /app
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      - name: script
+        configMap:
+          name: jenkins-trigger-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins-trigger-service
+  namespace: churn-prediction
+spec:
+  selector:
+    app: jenkins-trigger
+  ports:
+  - port: 5001
+    targetPort: 5001
+    name: http
+  type: ClusterIP

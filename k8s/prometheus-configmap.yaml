@@ -12,6 +12,14 @@ data:
         monitor: 'churn-prediction-monitor'
         environment: 'production'
 
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager-service:9093']
+
+    rule_files:
+      - '/etc/prometheus/alert_rules.yml'
+
     scrape_configs:
       - job_name: 'churn-prediction-api'
         scrape_interval: 5s
@@ -40,3 +48,57 @@ data:
             labels:
               service: 'prometheus'
               component: 'monitoring'
+
+  alert_rules.yml: |
+    groups:
+      - name: data_drift_alerts
+        interval: 30s
+        rules:
+          - alert: DataDriftDetected
+            expr: |
+              (
+                abs(feature_drift_score - feature_drift_baseline) > 0.3
+                and feature_drift_score > 0
+              )
+            for: 2m
+            labels:
+              severity: critical
+              alert_type: data_drift
+            annotations:
+              summary: "Data drift detected in feature {{ $labels.feature }}"
+              description: "Feature {{ $labels.feature }} has drifted significantly. Current score: {{ $value }}, Baseline: {{ $labels.baseline }}"
+              feature: "{{ $labels.feature }}"
+              drift_score: "{{ $value }}"
+
+          - alert: HighPredictionLatency
+            expr: |
+              histogram_quantile(0.95, rate(prediction_latency_seconds_bucket[5m])) > 0.5
+            for: 5m
+            labels:
+              severity: warning
+              alert_type: performance
+            annotations:
+              summary: "High prediction latency detected"
+              description: "95th percentile latency is {{ $value }}s, exceeding 500ms threshold"
+
+          - alert: HighErrorRate
+            expr: |
+              rate(prediction_errors_total[5m]) > 0.05
+            for: 5m
+            labels:
+              severity: critical
+              alert_type: errors
+            annotations:
+              summary: "High prediction error rate"
+              description: "Error rate is {{ $value }} errors/sec"
+
+          - alert: ModelAccuracyDrop
+            expr: |
+              model_accuracy < 0.75
+            for: 10m
+            labels:
+              severity: warning
+              alert_type: model_performance
+            annotations:
+              summary: "Model accuracy has dropped"
+              description: "Current model accuracy is {{ $value }}, below 75% threshold"

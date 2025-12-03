@@ -6,15 +6,29 @@ route:
   group_wait: 10s
   group_interval: 10s
   repeat_interval: 12h
-  receiver: 'drift-webhook'
+  receiver: 'jenkins-trigger'
   
   routes:
+    - match:
+        alertname: DataDriftDetected
+      receiver: 'jenkins-trigger'
+      continue: false
+    
     - match:
         severity: critical
       receiver: 'drift-webhook'
       continue: true
 
 receivers:
+  # Jenkins trigger for automatic retraining
+  - name: 'jenkins-trigger'
+    webhook_configs:
+      - url: 'http://localhost:5001/trigger-retraining'
+        send_resolved: true
+        http_config:
+          follow_redirects: true
+  
+  # Original webhook to API (for logging)
   - name: 'drift-webhook'
     webhook_configs:
       - url: 'http://churn-api:8000/webhook/drift-alert'
