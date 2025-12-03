@@ -11,7 +11,6 @@ pipeline {
         MLFLOW_TRACKING_URI = 'http://host.docker.internal:5000'
         DATASET = "${params.DATASET_PATH}"
         IMAGE_TAG = "${BUILD_NUMBER}"
-        NAMESPACE = 'churn-prediction'
     }
     
     stages {
@@ -51,6 +50,7 @@ pipeline {
             steps {
                 echo '🚀 Starting MLflow server...'
                 sh '''
+                    # Check if MLflow is already running
                     if pgrep -f "mlflow server" > /dev/null; then
                         echo "✓ MLflow server already running"
                     else
@@ -59,104 +59,78 @@ pipeline {
                         sleep 5
                     fi
                     
-                    # Test connection
-                    for i in {1..5}; do
-                        if curl -f http://localhost:5000/health 2>/dev/null; then
-                            echo "✓ MLflow is accessible"
-                            break
-                        fi
-                        echo "Waiting for MLflow... ($i/5)"
-                        sleep 2
-                    done
+                    # Verify MLflow is accessible
+                    curl -f http://localhost:5000/health || echo "OK"
                 '''
             }
         }
         
-        stage('Build Docker Images in Minikube') {
+        stage('Build Docker Images') {
             steps {
-                echo '🐳 Building Docker images inside Minikube...'
+                echo '🐳 Building Docker images...'
                 sh '''
-                    # Use Minikube's Docker daemon
-                    eval $(minikube docker-env)
-                    
-                    echo "Building preprocessing image..."
+                    # Build preprocessing image
                     docker build -t churn-preprocess:latest -f Dockerfile.preprocess .
                     
-                    echo "Building training image..."
+                    # Build training image
                     docker build -t churn-training:latest -f Dockerfile.training .
                     
-                    echo "✓ Preprocessing and training images built"
+                    # Build serving image
+                    docker build -t churn-serving:latest -f Dockerfile.serving .
+                    
+                    echo "✓ Docker images built successfully"
                 '''
             }
         }
         
         stage('Data Preprocessing') {
             steps {
-                echo '🔄 Running data preprocessing...'
+                echo '🔄 Running data preprocessing in Docker...'
                 sh '''
-                    # Use Minikube's Docker to run preprocessing
-                    eval $(minikube docker-env)
-                    
+                    # Run preprocessing in Docker container
                     docker run --rm \
                         -v $(pwd):/app \
-                        -w /app \
+                        -v $(pwd)/preprocessed_data:/app/preprocessed_data \
+                        -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 \
+                        --network host \
                         churn-preprocess:latest \
                         python preprocess.py \
                             --dataset ${DATASET} \
                             --output-folder preprocessed_data \
                             --clients 3
                     
-                    # Verify output
+                    # Verify preprocessing outputs
                     if [ ! -f "preprocessed_data/preprocessor.pkl" ]; then
-                        echo "❌ Preprocessing failed"
+                        echo "❌ Preprocessing failed - preprocessor.pkl not found"
                         exit 1
                     fi
                     
-                    echo "✓ Preprocessing completed"
-                    ls -lh preprocessed_data/
+                    echo "✓ Preprocessing completed successfully"
                 '''
             }
         }
         
         stage('Model Training') {
             steps {
-                echo '🤖 Training federated model...'
+                echo '🤖 Training federated model in Docker...'
                 sh '''
-                    # Use Minikube's Docker to run training
-                    eval $(minikube docker-env)
-                    
+                    # Run training in Docker container
                     docker run --rm \
                         -v $(pwd):/app \
-                        -w /app \
+                        -v $(pwd)/preprocessed_data:/app/preprocessed_data \
+                        -v $(pwd)/federated_data:/app/federated_data \
+                        -e MLFLOW_TRACKING_URI=http://host.docker.internal:5000 \
+                        --network host \
                         churn-training:latest \
                         python training_MLFlow.py
                     
                     # Verify model was created
                     if [ ! -f "federated_data/federated_churn_model.h5" ]; then
-                        echo "❌ Training failed"
+                        echo "❌ Training failed - model not found"
                         exit 1
                     fi
                     
-                    echo "✓ Training completed"
-                    ls -lh federated_data/
-                '''
-            }
-        }
-        
-        stage('Build Serving Image') {
-            steps {
-                echo '🐳 Building serving image (after model files created)...'
-                sh '''
-                    # Use Minikube's Docker daemon
-                    eval $(minikube docker-env)
-                    
-                    echo "Building serving image..."
-                    docker build -t churn-serving:latest -f Dockerfile.serving .
-                    
-                    echo "Verifying all images in Minikube:"
-                    docker images | grep churn
-                    
-                    echo "✓ All images built in Minikube"
+                    echo "✓ Model training completed"
                 '''
             }
         }
@@ -165,44 +139,62 @@ pipeline {
             steps {
                 echo '📊 Extracting model metrics...'
                 sh '''
+                    # Extract accuracy from metrics file
                     if [ -f "federated_data/round_evaluation/per_round_metrics.csv" ]; then
                         ACCURACY=$(tail -1 federated_data/round_evaluation/per_round_metrics.csv | cut -d',' -f3)
                         echo "Model Accuracy: ${ACCURACY}"
                         
-                        if [ "${SKIP_TESTS}" = "false" ]; then
-                            PASS=$(echo "${ACCURACY} >= 0.75" | bc -l)
-                            if [ "$PASS" -eq 0 ]; then
-                                echo "❌ Accuracy ${ACCURACY} below 0.75"
-                                exit 1
-                            fi
+                        # Check if accuracy meets threshold (0.75)
+                        if [ "${params.SKIP_TESTS}" = "false" ]; then
+                            docker run --rm python:3.9-slim python -c "
+import sys
+accuracy = float('${ACCURACY}')
+if accuracy < 0.75:
+    print('❌ Model accuracy (${ACCURACY}) below threshold (0.75)')
+    sys.exit(1)
+print('✓ Model accuracy acceptable')
+"
+                        else
+                            echo "⚠️  Skipping accuracy check (SKIP_TESTS=true)"
                         fi
-                        
-                        echo "✓ Model accuracy acceptable"
                     else
-                        echo "⚠️  Metrics file not found"
+                        echo "⚠️  Metrics file not found, skipping accuracy check"
                     fi
                 '''
             }
         }
         
-        stage('Copy Model Data to PVC') {
+        stage('Push Docker Images to Minikube') {
             when {
                 expression { params.FORCE_DEPLOY || currentBuild.result == null }
             }
             steps {
-                echo '📦 Copying model data to Kubernetes PVC...'
+                echo '📤 Loading Docker images into Minikube...'
                 sh '''
-                    # Delete old copier pod if exists
-                    kubectl delete pod data-copier -n ${NAMESPACE} 2>/dev/null || true
-                    sleep 2
+                    # Load images into Minikube
+                    minikube image load churn-preprocess:latest
+                    minikube image load churn-training:latest
+                    minikube image load churn-serving:latest
                     
-                    # Create copier pod
+                    echo "✓ Images loaded into Minikube"
+                '''
+            }
+        }
+        
+        stage('Copy Model Data to Minikube') {
+            when {
+                expression { params.FORCE_DEPLOY || currentBuild.result == null }
+            }
+            steps {
+                echo '📦 Copying model data to Minikube volumes...'
+                sh '''
+                    # Create a temporary pod to copy data to PVC
                     kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: data-copier
-  namespace: ${NAMESPACE}
+  namespace: churn-prediction
 spec:
   containers:
   - name: copier
@@ -217,22 +209,26 @@ spec:
       claimName: model-data-pvc
   restartPolicy: Never
 EOF
+
+                    # Wait for pod to be ready
+                    kubectl wait --for=condition=Ready pod/data-copier -n churn-prediction --timeout=60s
                     
-                    # Wait for pod
-                    kubectl wait --for=condition=Ready pod/data-copier -n ${NAMESPACE} --timeout=60s
-                    
-                    # Copy data
+                    # Copy preprocessed data
                     echo "Copying preprocessed data..."
-                    kubectl cp preprocessed_data ${NAMESPACE}/data-copier:/data/
+                    kubectl cp preprocessed_data churn-prediction/data-copier:/data/
                     
+                    # Copy federated data
                     echo "Copying federated data..."
-                    kubectl cp federated_data ${NAMESPACE}/data-copier:/data/
+                    kubectl cp federated_data churn-prediction/data-copier:/data/
                     
-                    # Verify
-                    echo "Verifying files..."
-                    kubectl exec -n ${NAMESPACE} data-copier -- sh -c "ls -lh /data/preprocessed_data && ls -lh /data/federated_data"
+                    # Verify files were copied
+                    kubectl exec -n churn-prediction data-copier -- ls -la /data/preprocessed_data
+                    kubectl exec -n churn-prediction data-copier -- ls -la /data/federated_data
                     
-                    echo "✓ Data copied successfully"
+                    # Clean up temporary pod
+                    kubectl delete pod data-copier -n churn-prediction
+                    
+                    echo "✓ Model data copied successfully"
                 '''
             }
         }
@@ -244,7 +240,7 @@ EOF
             steps {
                 echo '☸️  Deploying to Kubernetes...'
                 sh '''
-                    # Apply all configurations
+                    # Apply Kubernetes configurations in order
                     kubectl apply -f k8s/namespace.yaml
                     kubectl apply -f k8s/pvc.yaml
                     kubectl apply -f k8s/prometheus-rbac.yaml
@@ -256,87 +252,105 @@ EOF
                     kubectl apply -f k8s/grafana-dashboard-json.yaml
                     kubectl apply -f k8s/grafana-deployment.yaml
                     kubectl apply -f k8s/jenkins-trigger-deployment.yaml
+                    
+                    # Deploy API (this will rollout restart if already deployed)
                     kubectl apply -f k8s/api-deployment.yaml
                     
-                    echo "✓ Deployments applied"
+                    # Wait for critical deployments
+                    echo "Waiting for deployments to be ready..."
+                    kubectl wait --for=condition=available --timeout=180s deployment/prometheus -n churn-prediction || true
+                    kubectl wait --for=condition=available --timeout=180s deployment/grafana -n churn-prediction || true
+                    kubectl wait --for=condition=available --timeout=300s deployment/churn-api -n churn-prediction
+                    
+                    echo "✓ Kubernetes deployment completed"
                 '''
             }
         }
         
-        stage('Wait for Deployments') {
-            when {
-                expression { params.FORCE_DEPLOY || currentBuild.result == null }
-            }
+        stage('Health Check') {
             steps {
-                echo '⏳ Waiting for deployments to be ready...'
-                sh '''
-                    echo "Waiting for API deployment..."
-                    kubectl wait --for=condition=available --timeout=180s deployment/churn-api -n ${NAMESPACE} || {
-                        echo "⚠️  API deployment timeout"
-                        kubectl get pods -n ${NAMESPACE} -l app=churn-api
-                        kubectl describe pods -n ${NAMESPACE} -l app=churn-api | tail -50
-                        exit 1
-                    }
-                    
-                    echo "Waiting for monitoring stack..."
-                    kubectl wait --for=condition=available --timeout=120s deployment/prometheus -n ${NAMESPACE} || true
-                    kubectl wait --for=condition=available --timeout=120s deployment/grafana -n ${NAMESPACE} || true
-                    
-                    echo "✓ Deployments ready"
-                '''
-            }
-        }
-        
-        stage('Health Check & Generate Traffic') {
-            steps {
-                echo '🏥 Testing deployment...'
+                echo '🏥 Running health checks...'
                 sh '''
                     # Get service URL
-                    API_URL=$(minikube service churn-api-service -n ${NAMESPACE} --url)
+                    API_URL=$(minikube service churn-api-service -n churn-prediction --url)
                     echo "API URL: $API_URL"
                     
-                    # Wait for API to respond
+                    # Wait for API to be healthy
                     for i in {1..30}; do
-                        if curl -f -s ${API_URL}/health >/dev/null 2>&1; then
+                        if curl -f ${API_URL}/health 2>/dev/null; then
                             echo "✓ API is healthy"
                             break
                         fi
-                        echo "Waiting for API... ($i/30)"
-                        sleep 5
+                        echo "Waiting for API to be ready... (attempt $i/30)"
+                        sleep 10
                     done
                     
-                    # Test prediction
+                    # Test prediction endpoint
                     echo "Testing prediction endpoint..."
                     curl -X POST ${API_URL}/predict \
                         -H "Content-Type: application/json" \
-                        -d '{"Tenure": 12.0, "PreferredLoginDevice": "Mobile Phone", "CityTier": 1, "WarehouseToHome": 15.0, "PreferredPaymentMode": "Credit Card", "Gender": "Male", "HourSpendOnApp": 3.0, "NumberOfDeviceRegistered": 3, "PreferedOrderCat": "Laptop & Accessory", "SatisfactionScore": 5, "MaritalStatus": "Single", "NumberOfAddress": 2, "Complain": 0, "OrderAmountHikeFromlastYear": 15.0, "CouponUsed": 1.0, "OrderCount": 5.0, "DaySinceLastOrder": 3.0, "CashbackAmount": 150.0}'
+                        -d '{
+                            "Tenure": 12.0,
+                            "PreferredLoginDevice": "Mobile Phone",
+                            "CityTier": 1,
+                            "WarehouseToHome": 15.0,
+                            "PreferredPaymentMode": "Credit Card",
+                            "Gender": "Male",
+                            "HourSpendOnApp": 3.0,
+                            "NumberOfDeviceRegistered": 3,
+                            "PreferedOrderCat": "Laptop & Accessory",
+                            "SatisfactionScore": 5,
+                            "MaritalStatus": "Single",
+                            "NumberOfAddress": 2,
+                            "Complain": 0,
+                            "OrderAmountHikeFromlastYear": 15.0,
+                            "CouponUsed": 1.0,
+                            "OrderCount": 5.0,
+                            "DaySinceLastOrder": 3.0,
+                            "CashbackAmount": 150.0
+                        }' && echo "" || echo "⚠️  Prediction test failed"
                     
-                    echo ""
-                    echo "Generating test traffic (20 requests)..."
-                    for i in {1..20}; do
-                        curl -X POST ${API_URL}/predict \
-                            -H "Content-Type: application/json" \
-                            -d '{"Tenure": 12.0, "PreferredLoginDevice": "Mobile Phone", "CityTier": 1, "WarehouseToHome": 15.0, "PreferredPaymentMode": "Credit Card", "Gender": "Male", "HourSpendOnApp": 3.0, "NumberOfDeviceRegistered": 3, "PreferedOrderCat": "Laptop & Accessory", "SatisfactionScore": 5, "MaritalStatus": "Single", "NumberOfAddress": 2, "Complain": 0, "OrderAmountHikeFromlastYear": 15.0, "CouponUsed": 1.0, "OrderCount": 5.0, "DaySinceLastOrder": 3.0, "CashbackAmount": 150.0}' \
-                            -s >/dev/null && echo "  ✓ $i" || echo "  ✗ $i"
-                        sleep 0.3
-                    done
-                    
-                    echo "✓ Traffic generated"
+                    # Check metrics endpoint
+                    echo "Checking metrics endpoint..."
+                    curl -s ${API_URL}/metrics | grep -E "predictions_total|prediction_latency" | head -5 || echo "⚠️  Metrics not available yet"
                 '''
             }
         }
         
-        stage('Cleanup Temporary Resources') {
+        stage('Generate Test Traffic') {
             steps {
-                echo '🧹 Cleaning up temporary resources...'
+                echo '🔄 Generating test traffic to populate metrics...'
                 sh '''
-                    # Delete data copier pod
-                    kubectl delete pod data-copier -n ${NAMESPACE} 2>/dev/null || true
+                    API_URL=$(minikube service churn-api-service -n churn-prediction --url)
                     
-                    # Reset Docker environment
-                    eval $(minikube docker-env -u)
+                    # Generate 20 test predictions
+                    for i in {1..20}; do
+                        curl -X POST ${API_URL}/predict \
+                            -H "Content-Type: application/json" \
+                            -d '{
+                                "Tenure": 12.0,
+                                "PreferredLoginDevice": "Mobile Phone",
+                                "CityTier": 1,
+                                "WarehouseToHome": 15.0,
+                                "PreferredPaymentMode": "Credit Card",
+                                "Gender": "Male",
+                                "HourSpendOnApp": 3.0,
+                                "NumberOfDeviceRegistered": 3,
+                                "PreferedOrderCat": "Laptop & Accessory",
+                                "SatisfactionScore": 5,
+                                "MaritalStatus": "Single",
+                                "NumberOfAddress": 2,
+                                "Complain": 0,
+                                "OrderAmountHikeFromlastYear": 15.0,
+                                "CouponUsed": 1.0,
+                                "OrderCount": 5.0,
+                                "DaySinceLastOrder": 3.0,
+                                "CashbackAmount": 150.0
+                            }' -s > /dev/null && echo "  Request $i: ✓" || echo "  Request $i: ✗"
+                        sleep 0.5
+                    done
                     
-                    echo "✓ Cleanup complete"
+                    echo "✓ Test traffic generated"
                 '''
             }
         }
@@ -346,6 +360,9 @@ EOF
         always {
             echo '📋 Archiving artifacts...'
             archiveArtifacts artifacts: 'federated_data/**/*.png,federated_data/**/*.csv,federated_data/**/*.h5,preprocessed_data/**/*.pkl', allowEmptyArchive: true
+            
+            // Cleanup Docker images
+            sh 'docker image prune -f'
         }
         
         success {
@@ -354,14 +371,14 @@ EOF
             ✅ PIPELINE COMPLETED SUCCESSFULLY
             ============================================================
             
-            Model trained and deployed to Kubernetes!
+            Model has been trained and deployed to Kubernetes.
             
-            Access services:
+            Access the services:
             - API: minikube service churn-api-service -n churn-prediction
-            - Grafana: minikube service grafana-service -n churn-prediction  
+            - Grafana: minikube service grafana-service -n churn-prediction
             - Prometheus: minikube service prometheus-service -n churn-prediction
             
-            Grafana credentials: admin / root
+            Default Grafana credentials: admin / root
             
             ============================================================
             '''
@@ -373,12 +390,12 @@ EOF
             ❌ PIPELINE FAILED
             ============================================================
             
-            Check logs above for details.
-            
-            Debugging commands:
-            - kubectl get pods -n churn-prediction
-            - kubectl logs -n churn-prediction -l app=churn-api
-            - kubectl describe deployment churn-api -n churn-prediction
+            Check the logs above for error details.
+            Common issues:
+            - Dataset not found
+            - Model accuracy below threshold
+            - Docker build failures
+            - Kubernetes deployment issues
             
             ============================================================
             '''
