@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 env:
-  PYTHON_VERSION: '3.10'
+  PYTHON_VERSION: '3.9'
   MLFLOW_TRACKING_URI: 'http://localhost:5000'
 
 jobs:
