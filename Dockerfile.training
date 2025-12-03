@@ -1,20 +1,30 @@
-# Dockerfile.training
-FROM tensorflow/tensorflow:2.14.0
+# Use Python 3.10 base image instead of tensorflow image with Python 3.11
+FROM python:3.10-slim
 
 WORKDIR /app
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
 COPY requirements.txt .
+
+# Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy training script and dataset
 COPY training_MLFlow.py .
 COPY E_Commerce_Dataset.xlsx .
 
-# Copy preprocessed federated data directory
-# This assumes preprocessing has already been run
-COPY preprocessed_data/ ./preprocessed_data/
+# Create necessary directories
+RUN mkdir -p federated_data/round_evaluation
+RUN mkdir -p preprocessed_data
 
-# Environment variable for MLflow tracking
-ENV MLFLOW_TRACKING_URI=http://mlflow:5000
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV TF_CPP_MIN_LOG_LEVEL=2
 
-# Run training
+# Default command
 CMD ["python", "training_MLFlow.py"]

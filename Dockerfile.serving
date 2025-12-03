@@ -1,35 +1,40 @@
-FROM tensorflow/tensorflow:2.14.0
+# Use Python 3.10 base image
+FROM python:3.10-slim
 
 WORKDIR /app
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
 COPY requirements.txt .
+
+# Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy only the API code - model files will be mounted at runtime
+# Copy application files
 COPY app.py .
-<<<<<<< HEAD
 COPY drift_detection.py .
 
-# Create directories for model files (will be mounted from PVC)
-RUN mkdir -p ./federated_data
-RUN mkdir -p ./preprocessed_data
+# Create directories for model and preprocessor
+RUN mkdir -p ./model_data/federated_data
+RUN mkdir -p ./model_data/preprocessed_data
 
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV TF_CPP_MIN_LOG_LEVEL=2
+ENV MODEL_PATH=/app/model_data/federated_data/federated_churn_model.h5
+ENV PREPROCESSOR_PATH=/app/model_data/preprocessed_data/preprocessor.pkl
+
+# Expose port
 EXPOSE 8000
 
-# Model paths will be provided via environment variables
-# MODEL_PATH and PREPROCESSOR_PATH should point to mounted volumes
-=======
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8000/health || exit 1
 
-COPY federated_data/federated_churn_model.h5 ./federated_data/
-COPY preprocessed_data/preprocessor.pkl ./preprocessed_data/
-
-EXPOSE 8000
-
-ENV MODEL_PATH=federated_data/federated_churn_model.h5
-ENV PREPROCESSOR_PATH=preprocessed_data/preprocessor.pkl
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
-
->>>>>>> parent of 9400a4d (Created CI/CD pipeline)
+# Run FastAPI with uvicorn
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

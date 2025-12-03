@@ -1,16 +1,28 @@
-# Dockerfile.training
-FROM tensorflow/tensorflow:2.14.0
+# Use Python 3.10 base image
+FROM python:3.10-slim
 
 WORKDIR /app
 
-# Copy only necessary files
+# Install system dependencies for pandas/numpy
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
 COPY requirements.txt .
+
+# Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy preprocessing script
 COPY preprocess.py .
 COPY E_Commerce_Dataset.xlsx .
 
-# Environment variable for MLflow tracking
-ENV MLFLOW_TRACKING_URI=http://mlflow:5000
+# Create output directory
+RUN mkdir -p preprocessed_data
 
-CMD ["python", "preprocess.py"]
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
+# Default command
+CMD ["python", "preprocess.py", "--dataset", "E_Commerce_Dataset.xlsx", "--output-folder", "preprocessed_data", "--clients", "3"]

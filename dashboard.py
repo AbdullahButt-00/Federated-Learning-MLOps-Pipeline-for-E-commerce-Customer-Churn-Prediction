@@ -7,9 +7,26 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import time
+import subprocess
 
-# ===================== CONFIG =====================
-API_URL = "http://localhost:8000"
+def get_minikube_service_url(service_name, namespace="churn-prediction"):
+    """Get minikube service URL"""
+    try:
+        result = subprocess.run(
+            ["minikube", "service", service_name, "-n", namespace, "--url"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        return None
+    except:
+        return None
+
+API_URL = get_minikube_service_url("churn-api-service") or "http://localhost:8000"
+PROMETHEUS_URL = get_minikube_service_url("prometheus-service") or "http://localhost:9090"
+GRAFANA_URL = get_minikube_service_url("grafana-service") or "http://localhost:3000"
 MLFLOW_URL = "http://localhost:5000"
 
 # ===================== PAGE CONFIG =====================
@@ -55,8 +72,8 @@ try:
     else:
         st.error("❌ API is not responding correctly")
 except:
-    st.error("❌ Cannot connect to API. Make sure it's running on http://localhost:8000")
-    st.info("Run: `python app.py` in another terminal")
+    st.error(f"❌ Cannot connect to API. Make sure it's running on {API_URL}")
+    st.info("Check your Kubernetes service status")
     st.stop()
 
 # ===================== SIDEBAR =====================
@@ -240,8 +257,8 @@ with st.sidebar.expander("ℹ️ **System Info**", expanded=False):
     st.markdown(f"- [API Docs]({API_URL}/docs)")
     st.markdown(f"- [Prometheus Metrics]({API_URL}/metrics)")
     st.markdown(f"- [MLflow UI]({MLFLOW_URL})")
-    st.markdown(f"- [Prometheus](http://localhost:9090)")
-    st.markdown(f"- [Grafana](http://localhost:3000)")
+    st.markdown(f"- [Prometheus]({PROMETHEUS_URL})")
+    st.markdown(f"- [Grafana]({GRAFANA_URL})")
 
 # ===================== MAIN AREA =====================
 col1, col2 = st.columns([2, 1])
@@ -441,20 +458,29 @@ with col2:
     """)
     
     if st.button("📊 Open MLflow UI"):
-        st.markdown(f"[Open MLflow UI]({MLFLOW_URL})")
+        st.markdown(f"Open MLflow at: {MLFLOW_URL}")
+        st.code(MLFLOW_URL, language="text")
     
     if st.button("📈 Open Prometheus"):
-        st.markdown("[Open Prometheus](http://localhost:9090)")
+        st.markdown(f"Open Prometheus at: {PROMETHEUS_URL}")
+        st.code(PROMETHEUS_URL, language="text")
     
     if st.button("📉 Open Grafana"):
-        st.markdown("[Open Grafana](http://localhost:3000)")
+        st.markdown(f"Open Grafana at: {GRAFANA_URL}")
+        st.code(GRAFANA_URL, language="text")
+        st.info("Default credentials: admin/admin")
 
 # ===================== FOOTER =====================
 st.markdown("---")
 st.markdown(
-    """
+    f"""
     <div style='text-align: center'>
         <p>🔮 Federated Churn Prediction Dashboard | Built with Streamlit & FastAPI</p>
+        <p style='font-size: 12px; color: gray;'>
+            Monitoring: <a href="{PROMETHEUS_URL}" target="_blank">Prometheus</a> | 
+            <a href="{GRAFANA_URL}" target="_blank">Grafana</a> | 
+            <a href="{MLFLOW_URL}" target="_blank">MLflow</a>
+        </p>
     </div>
     """,
     unsafe_allow_html=True
