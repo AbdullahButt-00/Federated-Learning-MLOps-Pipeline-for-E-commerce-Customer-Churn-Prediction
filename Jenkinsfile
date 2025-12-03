@@ -2,6 +2,10 @@ pipeline {
     agent any
     
     environment {
+
+        PATH = "/home/immad/anaconda3/envs/tffenv/bin:${env.PATH}"
+        PYTHONPATH = "${env.WORKSPACE}"
+
         // Docker registry (update if using Docker Hub or private registry)
         REGISTRY = 'localhost:5000'  // Change to your registry
         IMAGE_TAG = "${env.BUILD_NUMBER}"
