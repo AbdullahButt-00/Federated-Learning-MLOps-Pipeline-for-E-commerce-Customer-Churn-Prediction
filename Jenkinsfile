@@ -164,28 +164,44 @@ fi
     }
 }
 
-        stage('Verify Minikube') {
-            steps {
-                echo '🔍 Verifying Minikube is running...'
-                sh '''
-        # Check if minikube is running
-        if ! minikube status > /dev/null 2>&1; then
-            echo "⚠️  Minikube is not running. Starting minikube..."
-            minikube start
-            sleep 10
-        fi
+stage('Verify Minikube') {
+    steps {
+        echo '🔍 Verifying Minikube is running...'
+        sh '''
+# Check if minikube is running
+if ! minikube status > /dev/null 2>&1; then
+    echo "⚠️  Minikube is not running properly"
+    
+    # Try to delete existing cluster (in case it's corrupted)
+    echo "🗑️  Cleaning up existing minikube cluster..."
+    minikube delete || true
+    
+    # Start fresh minikube cluster
+    echo "🚀 Starting fresh minikube cluster..."
+    minikube start --driver=docker --kubernetes-version=v1.28.0
+    
+    sleep 10
+fi
 
-        # Verify minikube is accessible
-        if ! kubectl get nodes > /dev/null 2>&1; then
-            echo "❌ Cannot connect to Kubernetes cluster"
-            exit 1
-        fi
-
+# Verify minikube is accessible
+MAX_RETRIES=5
+RETRY=0
+while [ $RETRY -lt $MAX_RETRIES ]; do
+    if kubectl get nodes > /dev/null 2>&1; then
         echo "✓ Minikube is running and accessible"
         kubectl get nodes
-                '''
-            }
-        }
+        exit 0
+    fi
+    RETRY=$((RETRY+1))
+    echo "Waiting for cluster to be ready... (attempt $RETRY/$MAX_RETRIES)"
+    sleep 10
+done
+
+echo "❌ Cannot connect to Kubernetes cluster after $MAX_RETRIES attempts"
+exit 1
+        '''
+    }
+}
         
         stage('Push Docker Images to Minikube') {
             when {
