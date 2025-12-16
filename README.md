@@ -965,4 +965,436 @@ POST /predict
   "churn_prediction": 0,
   "risk_level": "Low",
   "latency_ms": 45.23,
-  "model
+  "model_version": "5"
+}
+```
+
+#### 3. Health Check
+```http
+GET /health
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "model_loaded": true,
+  "drift_monitoring_active": true,
+  "reference_data_size": 100,
+  "monitoring_data_size": 45
+}
+```
+
+#### 4. Prometheus Metrics
+```http
+GET /metrics
+```
+
+**Response:** (Prometheus exposition format)
+```
+# HELP predictions_total Total number of predictions made
+# TYPE predictions_total counter
+predictions_total 1523.0
+
+# HELP prediction_latency_seconds Prediction latency
+# TYPE prediction_latency_seconds histogram
+prediction_latency_seconds_bucket{le="0.01"} 1234.0
+prediction_latency_seconds_bucket{le="0.05"} 1450.0
+...
+```
+
+#### 5. Model Information
+```http
+GET /model-info
+```
+
+**Response:**
+```json
+{
+  "model_name": "churn_prediction_model",
+  "version": "5",
+  "stage": "Production",
+  "run_id": "abc123def456",
+  "accuracy": 0.9234,
+  "f1_score": 0.8945,
+  "created_at": "2024-12-15T10:30:00",
+  "mlflow_uri": "http://localhost:5000/#/models/churn_prediction_model/versions/5"
+}
+```
+
+#### 6. Reload Model
+```http
+POST /reload-model
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "previous_version": "4",
+  "new_version": "5",
+  "message": "Model reloaded successfully"
+}
+```
+
+#### 7. Drift Status
+```http
+GET /drift-status
+```
+
+**Response:**
+```json
+{
+  "drift_detected": false,
+  "reference_size": 100,
+  "monitoring_size": 45,
+  "drift_scores": {
+    "Tenure": 0.023,
+    "WarehouseToHome": 0.031,
+    "HourSpendOnApp": 0.015,
+    "OrderCount": 0.042
+  },
+  "features_with_drift": []
+}
+```
+
+#### 8. Trigger Drift Check
+```http
+POST /check-drift
+```
+
+**Response:**
+```json
+{
+  "status": "completed",
+  "drift_detected": true,
+  "drifted_features": ["Tenure", "OrderCount"],
+  "timestamp": "2024-12-15T15:45:30"
+}
+```
+
+#### 9. Interactive API Documentation
+```http
+GET /docs
+```
+
+**Features:**
+- Swagger UI with all endpoints
+- Try-it-out functionality
+- Request/response schemas
+- Authentication testing
+
+---
+
+## 📁 Project Structure
+
+```
+mlops-federated-churn/
+│
+├── app.py                          # FastAPI serving application
+├── training_MLFlow.py              # Federated learning with MLflow
+├── preprocess.py                   # Data preprocessing and client splitting
+├── dashboard.py                    # Streamlit main dashboard
+│
+├── pages/                          # Streamlit pages
+│   └── metrics.py                  # Training metrics visualization
+│
+├── docker-compose.yml              # Docker Compose orchestration
+├── Jenkinsfile                     # CI/CD pipeline definition
+├── requirements.txt                # Python dependencies
+│
+├── Dockerfile.preprocess           # Preprocessing container
+├── Dockerfile.training             # Training container
+├── Dockerfile.serving              # API serving container
+│
+├── k8s/                            # Kubernetes manifests
+│   ├── namespace.yaml              # Namespace definition
+│   ├── pvc.yaml                    # Persistent volume claims
+│   ├── api-deployment.yaml         # API deployment + service
+│   ├── prometheus-rbac.yaml        # RBAC for Prometheus
+│   ├── prometheus-configmap.yaml   # Prometheus config + rules
+│   ├── prometheus-deployment.yaml  # Prometheus deployment
+│   ├── alertmanager-deployment.yaml# Alertmanager setup
+│   ├── grafana-datasource-configmap.yaml   # Grafana datasource
+│   ├── grafana-dashboard-config.yaml       # Dashboard provisioning
+│   ├── grafana-dashboard-json.yaml         # Dashboard JSON
+│   ├── grafana-deployment.yaml     # Grafana deployment
+│   └── mlflow-deployment.yaml      # MLflow server (optional)
+│
+├── prometheus.yml                  # Prometheus config (Docker Compose)
+├── alertmanager.yml                # Alertmanager config
+├── grafana-datasource.yml          # Grafana datasource config
+│
+├── drift_test.sh                   # Drift detection test script
+│
+├── preprocessed_data/              # Generated: Preprocessed data
+│   ├── X_train.npy
+│   ├── X_test.npy
+│   ├── y_train.npy
+│   ├── y_test.npy
+│   ├── preprocessor.pkl
+│   └── feature_names.json
+│
+├── federated_data/                 # Generated: Client data splits
+│   ├── client_0/
+│   │   ├── X_train.npy
+│   │   └── y_train.npy
+│   ├── client_1/
+│   └── client_2/
+│
+├── mlruns/                         # Generated: MLflow tracking data
+│   └── 0/                          # Experiment ID
+│       └── <run_id>/               # Individual runs
+│
+└── mlartifacts/                    # Generated: MLflow artifacts
+    └── 0/
+        └── <run_id>/
+            ├── model/              # Saved TensorFlow models
+            ├── plots/              # Training curves
+            └── metrics/            # CSV metrics
+```
+
+---
+
+## 🔧 Troubleshooting
+
+### Common Issues
+
+#### 1. MLflow Connection Errors
+
+**Problem:** `ConnectionError: HTTPConnectionPool(host='mlflow', port=5000)`
+
+**Solutions:**
+```bash
+# Check if MLflow is running
+curl http://localhost:5000/health
+
+# Restart MLflow
+pkill -f "mlflow server"
+mlflow server --host 0.0.0.0 --port 5000 &
+
+# For Docker: check container
+docker ps | grep mlflow
+docker logs mlflow-server
+```
+
+#### 2. Minikube Volume Issues
+
+**Problem:** Model files not visible in Kubernetes pods
+
+**Solutions:**
+```bash
+# Verify PVC is bound
+kubectl get pvc -n churn-prediction
+
+# Check pod volume mounts
+kubectl describe pod <pod-name> -n churn-prediction
+
+# Manually copy files
+kubectl cp preprocessed_data churn-prediction/<pod-name>:/data/
+
+# Restart deployment
+kubectl rollout restart deployment churn-api -n churn-prediction
+```
+
+#### 3. Prometheus Not Scraping
+
+**Problem:** No metrics appearing in Grafana
+
+**Solutions:**
+```bash
+# Check Prometheus targets
+# Open http://localhost:9090/targets
+
+# Verify service discovery
+kubectl get endpoints -n churn-prediction
+
+# Check ConfigMap
+kubectl get configmap prometheus-config -n churn-prediction -o yaml
+
+# Restart Prometheus
+kubectl rollout restart deployment prometheus -n churn-prediction
+```
+
+#### 4. Drift Detection Not Triggering
+
+**Problem:** Drift test doesn't generate alerts
+
+**Solutions:**
+```bash
+# Check API logs
+kubectl logs -n churn-prediction deployment/churn-api --tail=100
+
+# Verify Alertmanager config
+kubectl get configmap alertmanager-config -n churn-prediction -o yaml
+
+# Check Alertmanager status
+curl http://localhost:9093/api/v2/alerts
+
+# Manually trigger drift check
+curl -X POST http://localhost:8000/check-drift
+```
+
+#### 5. Model Loading Fails
+
+**Problem:** `No model found in Production or Staging`
+
+**Solutions:**
+```bash
+# Check MLflow registry
+curl http://localhost:5000/api/2.0/mlflow/registered-models/get?name=churn_prediction_model
+
+# Verify model stage
+python << EOF
+from mlflow.tracking import MlflowClient
+client = MlflowClient()
+versions = client.search_model_versions("name='churn_prediction_model'")
+for v in versions:
+    print(f"Version {v.version}: {v.current_stage}")
+EOF
+
+# Manually promote a model
+python << EOF
+from mlflow.tracking import MlflowClient
+client = MlflowClient()
+client.transition_model_version_stage(
+    name="churn_prediction_model",
+    version="1",
+    stage="Production"
+)
+EOF
+```
+
+#### 6. Jenkins Build Fails
+
+**Problem:** Pipeline fails at "Build Docker Images" stage
+
+**Solutions:**
+```bash
+# Check Docker daemon in Minikube
+eval $(minikube docker-env)
+docker ps
+
+# Verify Minikube is running
+minikube status
+
+# Check disk space
+df -h
+minikube ssh "df -h"
+
+# Clean up old images
+docker system prune -a -f
+
+# Restart Minikube with more resources
+minikube stop
+minikube start --cpus=4 --memory=8192
+```
+
+#### 7. Grafana Datasource Issues
+
+**Problem:** "Data source not found" errors
+
+**Solutions:**
+```bash
+# Check datasource ConfigMap
+kubectl get configmap grafana-datasource -n churn-prediction -o yaml
+
+# Verify Prometheus service
+kubectl get svc prometheus-service -n churn-prediction
+
+# Restart Grafana
+kubectl rollout restart deployment grafana -n churn-prediction
+
+# Check Grafana logs
+kubectl logs -n churn-prediction deployment/grafana --tail=50
+```
+
+---
+
+## 📈 Performance Benchmarks
+
+Expected performance metrics:
+
+| Metric | Value |
+|--------|-------|
+| Training Time (20 rounds) | ~5-7 minutes |
+| Model Accuracy | > 80% (threshold) |
+| Prediction Latency (p95) | < 100ms |
+| API Throughput | ~100 req/sec |
+| Memory Usage (API pod) | ~500MB |
+| CPU Usage (API pod) | ~0.5 cores |
+
+---
+
+## 🔐 Security Considerations
+
+- **Data Privacy**: Federated learning ensures raw data never leaves client nodes
+- **Model Security**: Models stored in persistent volumes with restricted access
+- **API Security**: Consider adding authentication (JWT, API keys) for production
+- **Network Policies**: Implement Kubernetes network policies to isolate services
+- **Secrets Management**: Use Kubernetes secrets for sensitive data (not implemented)
+
+---
+
+## 🛣 Future Enhancements
+
+- [ ] Add JWT authentication to API endpoints
+- [ ] Implement differential privacy in federated aggregation
+- [ ] Add A/B testing for model versions
+- [ ] Integrate with cloud MLflow (AWS, Azure, GCP)
+- [ ] Add data validation with Great Expectations
+- [ ] Implement feature store (Feast)
+- [ ] Add model explainability (SHAP, LIME)
+- [ ] Automated hyperparameter tuning (Optuna)
+- [ ] Multi-cluster Kubernetes deployment
+- [ ] Real-time streaming predictions (Kafka, Flink)
+
+---
+
+## 📚 References
+
+- **Federated Learning**: [Flower Framework](https://flower.dev/)
+- **MLflow**: [Official Documentation](https://mlflow.org/docs/latest/index.html)
+- **Kubernetes**: [K8s Docs](https://kubernetes.io/docs/home/)
+- **FastAPI**: [FastAPI Guide](https://fastapi.tiangolo.com/)
+- **Prometheus**: [Monitoring Guide](https://prometheus.io/docs/introduction/overview/)
+- **Data Drift**: [Evidently AI Blog](https://www.evidentlyai.com/blog/data-drift-detection)
+
+---
+
+## 👥 Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 📧 Contact
+
+For questions or support, please:
+- Open an issue on GitHub
+- Email: [your-email@example.com]
+- Slack: [your-workspace-link]
+
+---
+
+## 🙏 Acknowledgments
+
+- **Dataset**: [Kaggle E-Commerce Dataset](https://www.kaggle.com/datasets/carrie1/ecommerce-data)
+- **Federated Learning**: Inspired by Google's FL research
+- **MLOps Community**: For best practices and tools
+
+---
+
+**Built with ❤️ for MLOps excellence**
