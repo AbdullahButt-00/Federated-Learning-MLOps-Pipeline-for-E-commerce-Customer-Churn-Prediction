@@ -1383,18 +1383,16 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📧 Contact
 
 For questions or support, please:
-- Open an issue on GitHub
-- Email: [your-email@example.com]
-- Slack: [your-workspace-link]
+- Email: [abdullah03467496@gmail.com.com]
+- LinkedIn: [[LinkedIn](https://www.linkedin.com/in/m-abdullah-butt-01-01-abc/)]
 
 ---
 
 ## 🙏 Acknowledgments
 
 - **Dataset**: [Kaggle E-Commerce Dataset](https://www.kaggle.com/datasets/carrie1/ecommerce-data)
-- **Federated Learning**: Inspired by Google's FL research
-- **MLOps Community**: For best practices and tools
+- **Federated Learning**: Inspired by Google's Federated Learning research
+- **Contributor:** [[Immad Shah](https://github.com/D3aThNdDeMiSe)]
 
 ---
 
-**Built with ❤️ for MLOps excellence**
